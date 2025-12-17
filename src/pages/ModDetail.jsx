@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { Download, User, Calendar, Tag, ChevronLeft, MessageSquare, Layers } from "lucide-react";
+import { Download, User, Calendar, Tag, ChevronLeft, MessageSquare, Layers, Star, AlertTriangle } from "lucide-react";
 import { useMod, usePostComment } from "../hooks/useApi";
+import StarRating from "../components/StarRating";
+import toast from "react-hot-toast";
+import NotFound from "../components/NotFound";
 
 export default function ModDetail() {
   const { slug } = useParams();
@@ -13,11 +16,11 @@ export default function ModDetail() {
   // Form State
   const [commentName, setCommentName] = useState("");
   const [commentBody, setCommentBody] = useState("");
+  const [rating, setRating] = useState(0);
 
   // Sync active image when mod data loads
   useEffect(() => {
     if (mod?.images?.length > 0 && !activeImage) {
-      // Find cover or default to first
       const cover = mod.images.find(i => i.is_cover) || mod.images[0];
       setActiveImage(cover.image);
     }
@@ -30,65 +33,81 @@ export default function ModDetail() {
     postComment.mutate({
       modId: mod.id,
       user_name: commentName,
-      content: commentBody
+      content: commentBody,
+      rating: rating
     }, {
       onSuccess: () => {
         setCommentBody("");
-        // Optional: Show toast notification
-      }
+        setRating(0);
+        toast.success("Review posted successfully!");
+      },
+      onError: () => toast.error("Failed to post review.")
     });
   };
 
   const getEmbedUrl = (url) => {
     if (!url) return null;
-    // Handle both youtube.com/watch?v= and youtu.be/ formats
     let videoId = "";
     if (url.includes("youtube.com/watch?v=")) {
       videoId = url.split("v=")[1];
     } else if (url.includes("youtu.be/")) {
       videoId = url.split("youtu.be/")[1];
     }
-    
-    // Remove any additional query params like &t=
-    if (videoId.includes("&")) {
-      videoId = videoId.split("&")[0];
-    }
-
+    if (videoId.includes("&")) videoId = videoId.split("&")[0];
     return videoId ? `https://www.youtube.com/embed/${videoId}` : null;
   };
 
-  if (isLoading) return <div className="text-center py-20">Loading mod details...</div>;
-  if (isError || !mod) return <div className="text-center py-20 text-red-500">Mod not found.</div>;
+  if (isLoading) return <div className="text-center py-20 text-slate-500">Loading mod details...</div>;
+  
+  // Improved Not Found Design
+  if (isError || !mod) {
+    return (
+      <NotFound 
+        title="Mod Not Found" 
+        message="This mod might have been deleted, hasn't been approved yet, or the URL is incorrect." 
+      />
+    );
+  }
 
   const embedUrl = getEmbedUrl(mod.youtube_url);
 
   return (
     <div className="animate-fadeIn pb-10">
-      {/* Breadcrumb */}
       <Link to="/" className="inline-flex items-center text-slate-500 hover:text-blue-600 mb-6 transition text-sm sm:text-base">
         <ChevronLeft size={16} className="mr-1" /> Back to Mods
       </Link>
 
+      {/* Pending Status Warning */}
+      {mod.status === 'pending' && (
+        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-8 rounded-r-md shadow-sm">
+          <div className="flex">
+            <div className="shrink-0">
+              <AlertTriangle className="h-5 w-5 text-yellow-400" aria-hidden="true" />
+            </div>
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-yellow-800">Pending Approval</h3>
+              <div className="mt-2 text-sm text-yellow-700">
+                <p>This mod is currently pending approval by an administrator. It is visible only via this direct link and will not appear in the public list until approved.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
         {/* Left Column: Media & Content */}
-        <div className="lg:col-span-2 space-y-8 min-w-0"> {/* min-w-0 fixes flex/grid child overflow issues */}
+        <div className="lg:col-span-2 space-y-8 min-w-0">
           
           {/* Main Image Gallery */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
             <div className="aspect-video bg-slate-100 relative flex items-center justify-center">
               {activeImage ? (
-                <img 
-                  src={activeImage} 
-                  alt={mod.title} 
-                  className="w-full h-full object-contain" 
-                />
+                <img src={activeImage} alt={mod.title} className="w-full h-full object-contain" />
               ) : (
                 <span className="text-slate-400">No images available</span>
               )}
             </div>
-            
-            {/* Thumbnails */}
             {mod.images?.length > 1 && (
               <div className="p-4 flex gap-3 overflow-x-auto border-t border-slate-100 no-scrollbar">
                 {mod.images.map((img) => (
@@ -119,35 +138,42 @@ export default function ModDetail() {
             <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-slate-200">
               <h3 className="font-bold text-slate-900 mb-4">Video Preview</h3>
               <div className="aspect-video rounded-lg overflow-hidden bg-black">
-                <iframe 
-                  src={embedUrl}
-                  className="w-full h-full"
-                  allowFullScreen
-                  title="Mod Preview"
-                />
+                <iframe src={embedUrl} className="w-full h-full" allowFullScreen title="Mod Preview" />
               </div>
             </div>
           )}
 
-          {/* Comments */}
+          {/* Reviews & Comments */}
           <div className="bg-white p-5 sm:p-8 rounded-2xl shadow-sm border border-slate-200">
-            <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2">
-              <MessageSquare size={20} /> Comments
-            </h2>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <MessageSquare size={20} /> Reviews ({mod.comments?.length || 0})
+              </h2>
+              {mod.rating_count > 0 && (
+                <div className="flex items-center gap-2 bg-yellow-50 px-3 py-1 rounded-full border border-yellow-100">
+                  <Star className="fill-yellow-400 text-yellow-400" size={16} />
+                  <span className="font-bold text-yellow-700">{mod.average_rating}</span>
+                  <span className="text-xs text-yellow-600">({mod.rating_count})</span>
+                </div>
+              )}
+            </div>
             
             <div className="space-y-6 mb-8">
               {mod.comments?.length === 0 ? (
-                <p className="text-slate-400 italic">No comments yet. Be the first!</p>
+                <p className="text-slate-400 italic">No reviews yet. Be the first!</p>
               ) : (
                 mod.comments.map((comment) => (
                   <div key={comment.id} className="flex gap-4 p-4 rounded-xl bg-slate-50 border border-slate-100">
                     <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold shrink-0">
                       {comment.user_name.charAt(0).toUpperCase()}
                     </div>
-                    <div>
-                      <div className="flex flex-wrap items-center gap-x-2 mb-1">
-                        <span className="font-semibold text-slate-900">{comment.user_name}</span>
-                        <span className="text-xs text-slate-400">• {new Date(comment.created_at).toLocaleDateString()}</span>
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-slate-900">{comment.user_name}</span>
+                          <span className="text-xs text-slate-400">• {new Date(comment.created_at).toLocaleDateString()}</span>
+                        </div>
+                        {comment.rating > 0 && <StarRating rating={comment.rating} readOnly size={14} />}
                       </div>
                       <p className="text-slate-600 text-sm wrap-break-word">{comment.content}</p>
                     </div>
@@ -157,8 +183,13 @@ export default function ModDetail() {
             </div>
 
             <form onSubmit={handleSubmitComment} className="mt-6 border-t border-slate-100 pt-6">
-              <h3 className="text-sm font-semibold text-slate-900 mb-3">Leave a Reply</h3>
-              <div className="grid grid-cols-1 gap-4">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">Leave a Review</h3>
+              <div className="space-y-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-slate-500">Your Rating</label>
+                  <StarRating rating={rating} setRating={setRating} size={24} />
+                </div>
+                
                 <input
                   type="text"
                   placeholder="Your Name"
@@ -168,7 +199,7 @@ export default function ModDetail() {
                   required
                 />
                 <textarea
-                  placeholder="Write a comment..."
+                  placeholder="Write your review..."
                   className="input-field h-24 resize-none"
                   value={commentBody}
                   onChange={e => setCommentBody(e.target.value)}
@@ -179,7 +210,7 @@ export default function ModDetail() {
                   disabled={postComment.isPending}
                   className="btn-primary w-full sm:w-auto"
                 >
-                  {postComment.isPending ? "Posting..." : "Post Comment"}
+                  {postComment.isPending ? "Posting..." : "Post Review"}
                 </button>
               </div>
             </form>
@@ -188,7 +219,6 @@ export default function ModDetail() {
 
         {/* Right Column: Info & Download */}
         <div className="space-y-6 min-w-0">
-          
           <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-slate-200 lg:sticky lg:top-24">
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900 mb-4 leading-tight wrap-break-word">{mod.title}</h1>
             
@@ -235,7 +265,6 @@ export default function ModDetail() {
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );

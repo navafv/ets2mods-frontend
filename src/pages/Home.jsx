@@ -11,6 +11,7 @@ import { useMods, useCategories } from "../hooks/useApi";
 import useDebounce from "../hooks/useDebounce";
 import SkeletonCard from "../components/SkeletonCard";
 import Pagination from "../components/Pagination";
+import NotFound from "../components/NotFound";
 
 // Icon mapping: Backend string -> Lucide Component
 const iconMap = {
@@ -176,10 +177,12 @@ export default function Home() {
             <p className="text-red-500">Error loading mods. Please try again later.</p>
           </div>
         ) : mods.length === 0 ? (
-          <div className="text-center py-20 bg-white rounded-xl border border-slate-200">
-            <div className="text-6xl mb-4">📦</div>
-            <h3 className="text-lg font-semibold text-slate-900">No mods found</h3>
-            <p className="text-slate-500">Try adjusting your search or filters.</p>
+          <div className="py-12">
+            <NotFound 
+               title="No Mods Found" 
+               message="We couldn't find any mods matching your criteria. Try adjusting your filters or search terms."
+               showHomeButton={false}
+            />
           </div>
         ) : (
           <>

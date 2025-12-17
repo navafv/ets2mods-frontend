@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useUploadMod, useUploadModImage, useCategories } from "../hooks/useApi";
 import { UploadCloud, Link as LinkIcon, Plus, X, Image as ImageIcon, AlertTriangle } from "lucide-react";
+import toast from "react-hot-toast";
 
 export default function UploadMod() {
   const navigate = useNavigate();
@@ -56,9 +57,11 @@ export default function UploadMod() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.category) {
-      alert("Please select a category");
+      toast.error("Please select a category");
       return;
     }
+
+    const toastId = toast.loading("Uploading mod...");
 
     try {
       // 1. Create Mod
@@ -82,10 +85,14 @@ export default function UploadMod() {
         }));
       }
 
-      navigate(`/mods/${mod.slug}`);
+      toast.success("Mod uploaded successfully! It is now pending approval.", { id: toastId });
+      
+      // FIX: Redirect to Home instead of Mod Detail page to avoid 404 on pending mod
+      navigate("/");
+      
     } catch (error) {
       console.error(error);
-      alert("Failed to upload mod. Please check the form.");
+      toast.error("Failed to upload mod. Please check your inputs.", { id: toastId });
     }
   };
 
