@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  --color-dark: #0f172a;
+  --color-card: #020617;
+  --color-primary: #3b82f6;
+}
+
+body {
+  background-color: var(--color-dark);
+  color: #e5e7eb;
+  font-family: system-ui, sans-serif;
+}
+
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slideDown {
+  animation: slideDown 0.2s ease-out;
+}

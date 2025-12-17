@@ -1,0 +1,2350 @@
+
+================================================================================
+FILE: src\App.jsx
+================================================================================
+
+// src/App.jsx
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "./context/AuthContext";
+import { QueryClientProvider } from '@tanstack/react-query';
+import AdminRoute from "./routes/AdminRoute";
+import ProtectedRoute from "./routes/ProtectedRoute";
+import QueryErrorBoundary from "./components/QueryErrorBoundary";
+import Home from "./pages/Home";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
+import ForgotPassword from "./pages/ForgotPassword";
+import VerifyEmail from "./pages/VerifyEmail";
+import ModDetail from "./pages/ModDetail";
+import Layout from "./components/Layout";
+import Forums from "./pages/Forums";
+import UploadMod from "./pages/UploadMod";
+import ForumThread from "./pages/ForumThread";
+import AdminAnalytics from "./pages/AdminAnalytics";
+import AdminMods from "./pages/AdminMods";
+import AccountSettings from "./pages/AccountSettings";
+import { queryClient } from "./config/queryClient";
+
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <BrowserRouter>
+          <QueryErrorBoundary>
+            <Layout>
+              <Routes>
+                <Route path="/" element={<Home />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/register" element={<Register />} />
+                <Route path="/forgot-password" element={<ForgotPassword />} />
+                <Route path="/verify-email" element={<VerifyEmail />} />
+                <Route path="/mods/:id" element={<ModDetail />} />
+                <Route path="/search" element={<Home />} />
+                <Route path="/categories" element={<Home />} />
+                <Route path="/forums" element={<Forums />} />
+                <Route path="/upload" element={
+                  <ProtectedRoute>
+                    <UploadMod />
+                  </ProtectedRoute>
+                } />
+                <Route path="/forums/thread/:slug" element={<ForumThread />} />
+                <Route path="/account" element={
+                  <ProtectedRoute>
+                    <AccountSettings />
+                  </ProtectedRoute>
+                } />
+                <Route path="/admin/analytics" element={
+                  <AdminRoute>
+                    <AdminAnalytics />
+                  </AdminRoute>
+                } />
+                <Route path="/admin/mods" element={
+                  <AdminRoute>
+                    <AdminMods />
+                  </AdminRoute>
+                } />
+                <Route path="*" element={
+                  <div className="text-center py-20">
+                    <h1 className="text-4xl font-bold mb-4">404</h1>
+                    <p className="text-gray-400">Page not found</p>
+                  </div>
+                } />
+              </Routes>
+            </Layout>
+          </QueryErrorBoundary>
+        </BrowserRouter>
+      </AuthProvider>
+    </QueryClientProvider>
+  );
+}
+================================================================================
+FILE: src\api\axios.js
+================================================================================
+
+import axios from "axios";
+
+const api = axios.create({
+  baseURL: "http://127.0.0.1:8000/api/",
+});
+
+function getStorage() {
+  return localStorage.getItem("access")
+    ? localStorage
+    : sessionStorage;
+}
+
+api.interceptors.request.use((config) => {
+  const token = getStorage().getItem("access");
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+let refreshing = false;
+let queue = [];
+
+api.interceptors.response.use(
+  res => res,
+  async error => {
+    if (error.response?.status === 401 && !refreshing) {
+      refreshing = true;
+      const storage = getStorage();
+
+      try {
+        const res = await axios.post(
+          "http://127.0.0.1:8000/api/auth/token/refresh/",
+          { refresh: storage.getItem("refresh") }
+        );
+
+        storage.setItem("access", res.data.access);
+
+        queue.forEach(cb => cb(res.data.access));
+        queue = [];
+        refreshing = false;
+
+        error.config.headers.Authorization = `Bearer ${res.data.access}`;
+        return api(error.config);
+      } catch {
+        storage.clear();
+        window.location.href = "/login";
+      }
+    }
+
+    if (refreshing) {
+      return new Promise(resolve => {
+        queue.push(token => {
+          error.config.headers.Authorization = `Bearer ${token}`;
+          resolve(api(error.config));
+        });
+      });
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+export default api;
+
+================================================================================
+FILE: src\api\cache.js
+================================================================================
+
+const cache = new Map();
+
+export function cachedFetch(key, fetcher, ttl = 60000) {
+  if (cache.has(key)) {
+    const { data, time } = cache.get(key);
+    if (Date.now() - time < ttl) return Promise.resolve(data);
+  }
+
+  return fetcher().then(data => {
+    cache.set(key, { data, time: Date.now() });
+    return data;
+  });
+}
+
+================================================================================
+FILE: src\components\CompatibilityChecker.jsx
+================================================================================
+
+import { useState } from "react";
+import api from "../api/axios";
+
+export default function CompatibilityChecker({ modId }) {
+  const [result, setResult] = useState(null);
+  const [gameVersion, setGameVersion] = useState("1.0");
+
+  const check = async () => {
+    const res = await api.post(
+      `mods/${modId}/compatibility-check/`,
+      { game_version: gameVersion, dlcs: [], installed_mods: [] }
+    );
+    setResult(res.data);
+  };
+
+  return (
+    <div className="bg-black p-4 rounded border border-gray-700 mt-6">
+      <h3 className="font-semibold mb-2">Compatibility Check</h3>
+
+      <input
+        value={gameVersion}
+        onChange={e => setGameVersion(e.target.value)}
+        className="p-2 bg-black border border-gray-600 mb-2"
+        placeholder="Game version"
+      />
+
+      <button
+        onClick={check}
+        className="ml-2 bg-blue-600 px-4 py-1 rounded"
+      >
+        Check
+      </button>
+
+      {result && (
+        <div className="mt-3">
+          <p>Status: <b>{result.status}</b></p>
+          {result.issues.map((i, idx) => (
+            <p key={idx} className="text-red-400 text-sm">
+              ⚠ {i.message}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\components\ErrorBoundary.jsx
+================================================================================
+
+import React from "react";
+
+export default class ErrorBoundary extends React.Component {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-6 text-center">
+          <h1 className="text-2xl font-bold">Something went wrong</h1>
+          <p>Please refresh the page.</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+================================================================================
+FILE: src\components\ImageCarousel.jsx
+================================================================================
+
+import { useState } from "react";
+
+export default function ImageCarousel({ images }) {
+  const [index, setIndex] = useState(0);
+
+  if (!images?.length) return null;
+
+  return (
+    <div className="relative">
+      <img
+        src={images[index].image_url}
+        className="rounded border border-gray-800 w-full max-h-96 object-cover"
+      />
+
+      <button
+        onClick={() => setIndex((index - 1 + images.length) % images.length)}
+        className="absolute left-2 top-1/2 bg-black px-3 py-1"
+      >
+        ‹
+      </button>
+
+      <button
+        onClick={() => setIndex((index + 1) % images.length)}
+        className="absolute right-2 top-1/2 bg-black px-3 py-1"
+      >
+        ›
+      </button>
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\components\Layout.jsx
+================================================================================
+
+import Navbar from "./Navbar";
+
+export default function Layout({ children }) {
+  return (
+    <>
+      <Navbar />
+      <main className="max-w-7xl mx-auto px-6 py-8">
+        {children}
+      </main>
+    </>
+  );
+}
+
+================================================================================
+FILE: src\components\Navbar.jsx
+================================================================================
+
+import { useState, useEffect, useRef } from "react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import api from "../api/axios";
+import {
+  Search,
+  User,
+  Upload,
+  Bell,
+  Home,
+  MessageSquare,
+  Settings,
+  LogOut,
+  Menu,
+  X,
+  Download,
+  Shield,
+} from "lucide-react";
+
+export default function Navbar() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const isAdmin = user?.is_staff || false;
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const searchRef = useRef(null);
+  const notificationsRef = useRef(null);
+  const userMenuRef = useRef(null);
+
+  // Check if user is admin and fetch notifications
+  useEffect(() => {
+    if (user) {
+      // Fetch notifications
+      api
+        .get("users/notifications/")
+        .then((res) => {
+          setNotifications(res.data);
+          const unread = res.data.filter((n) => !n.is_read).length;
+          setUnreadCount(unread);
+        })
+        .catch(() => {});
+    } else {
+      // Clear notifications when logged out (defer to next microtask to avoid synchronous setState in effect)
+      Promise.resolve().then(() => {
+        setNotifications([]);
+        setUnreadCount(0);
+      });
+    }
+  }, [user]);
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (searchRef.current && !searchRef.current.contains(event.target)) {
+        setShowSearchResults(false);
+      }
+      if (
+        notificationsRef.current &&
+        !notificationsRef.current.contains(event.target)
+      ) {
+        setShowNotifications(false);
+      }
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setShowUserMenu(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Search functionality
+  const handleSearch = async (query) => {
+    setSearchQuery(query);
+    if (query.length > 2) {
+      try {
+        const response = await api.get(`mods/?search=${query}&limit=5`);
+        setSearchResults(response.data.results || []);
+        setShowSearchResults(true);
+      } catch (error) {
+        console.error("Search error:", error);
+      }
+    } else {
+      setSearchResults([]);
+      setShowSearchResults(false);
+    }
+  };
+
+  const handleSubmitSearch = (e) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      navigate(`/search?q=${encodeURIComponent(searchQuery)}`);
+      setShowSearchResults(false);
+      setSearchQuery("");
+    }
+  };
+
+  // Mark notification as read
+  const markNotificationAsRead = async (id) => {
+    try {
+      await api.patch(`users/notifications/${id}/`, { is_read: true });
+      setNotifications(
+        notifications.map((n) => (n.id === id ? { ...n, is_read: true } : n))
+      );
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+    } catch (error) {
+      console.error("Error marking notification as read:", error);
+    }
+  };
+
+  // Mark all notifications as read
+  const markAllAsRead = async () => {
+    try {
+      await api.post("users/notifications/mark-all-read/");
+      setNotifications(notifications.map((n) => ({ ...n, is_read: true })));
+      setUnreadCount(0);
+    } catch (error) {
+      console.error("Error marking all as read:", error);
+    }
+  };
+
+  // Navigation items
+  const navItems = [
+    { path: "/", label: "Home", icon: <Home size={18} /> },
+    { path: "/mods", label: "Mods", icon: <Download size={18} /> },
+    { path: "/categories", label: "Categories", icon: <Menu size={18} /> },
+    { path: "/upload", label: "Upload", icon: <Upload size={18} /> },
+    { path: "/forums", label: "Forums", icon: <MessageSquare size={18} /> },
+  ];
+
+  // Admin items
+  const adminItems = [
+    { path: "/admin/mods", label: "Mod Approvals", icon: <Shield size={18} /> },
+    {
+      path: "/admin/analytics",
+      label: "Analytics",
+      icon: <Settings size={18} />,
+    },
+    {
+      path: "/admin/users",
+      label: "User Management",
+      icon: <User size={18} />,
+    },
+  ];
+
+  // User menu items
+  const userMenuItems = [
+    { path: "/profile", label: "Profile", icon: <User size={16} /> },
+    {
+      path: "/account",
+      label: "Account Settings",
+      icon: <Settings size={16} />,
+    },
+    { path: "/my-mods", label: "My Mods", icon: <Upload size={16} /> },
+    {
+      path: "/collections",
+      label: "Collections",
+      icon: <Download size={16} />,
+    },
+  ];
+
+  return (
+    <>
+      {/* Top Navigation Bar */}
+      <nav className="sticky top-0 z-50 bg-card border-b border-gray-800 backdrop-blur-sm bg-opacity-90">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            {/* Left: Logo & Navigation */}
+            <div className="flex items-center">
+              {/* Logo */}
+              <Link to="/" className="flex items-center space-x-2">
+                <div className="w-8 h-8 bg-linear-to-br from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
+                  <span className="text-white font-bold text-sm">EM</span>
+                </div>
+                <span className="text-xl font-bold text-primary hidden sm:inline">
+                  ETS2 MODS
+                </span>
+              </Link>
+
+              {/* Desktop Navigation */}
+              <div className="hidden md:ml-8 md:flex md:space-x-1">
+                {navItems.map((item) => (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    className={`px-3 py-2 rounded-md text-sm font-medium flex items-center space-x-2 transition-colors ${
+                      location.pathname === item.path
+                        ? "bg-gray-800 text-white"
+                        : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                    }`}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                  </Link>
+                ))}
+              </div>
+            </div>
+
+            {/* Center: Search Bar */}
+            <div className="flex-1 max-w-2xl mx-4" ref={searchRef}>
+              <form onSubmit={handleSubmitSearch} className="relative">
+                <div className="relative">
+                  <Search
+                    className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+                    size={20}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Search mods, authors, categories..."
+                    className="w-full pl-10 pr-4 py-2 bg-gray-900 border border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white placeholder-gray-400"
+                    value={searchQuery}
+                    onChange={(e) => handleSearch(e.target.value)}
+                    onFocus={() =>
+                      searchQuery.length > 2 && setShowSearchResults(true)
+                    }
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery("");
+                        setSearchResults([]);
+                        setShowSearchResults(false);
+                      }}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white"
+                    >
+                      <X size={20} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Search Results Dropdown */}
+                {showSearchResults && searchResults.length > 0 && (
+                  <div className="absolute top-full mt-2 w-full bg-gray-900 border border-gray-700 rounded-lg shadow-xl max-h-96 overflow-y-auto z-50">
+                    {searchResults.map((mod) => (
+                      <Link
+                        key={mod.id}
+                        to={`/mods/${mod.id}`}
+                        className="block px-4 py-3 hover:bg-gray-800 border-b border-gray-800 last:border-b-0 transition-colors"
+                        onClick={() => setShowSearchResults(false)}
+                      >
+                        <div className="font-medium text-white">
+                          {mod.title}
+                        </div>
+                        <div className="text-sm text-gray-400 truncate">
+                          {mod.description}
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-xs text-blue-400">
+                            {mod.category?.name}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {mod.download_count} downloads
+                          </span>
+                        </div>
+                      </Link>
+                    ))}
+                    <Link
+                      to={`/search?q=${encodeURIComponent(searchQuery)}`}
+                      className="block px-4 py-3 text-center text-blue-400 hover:bg-gray-800 border-t border-gray-800 font-medium"
+                      onClick={() => setShowSearchResults(false)}
+                    >
+                      View all results
+                    </Link>
+                  </div>
+                )}
+              </form>
+            </div>
+
+            {/* Right: User Actions */}
+            <div className="flex items-center space-x-4">
+              {/* Admin Panel Button */}
+              {isAdmin && (
+                <Link
+                  to="/admin"
+                  className="hidden md:flex items-center space-x-2 px-3 py-2 bg-purple-900 hover:bg-purple-800 rounded-lg text-sm font-medium transition-colors"
+                >
+                  <Shield size={16} />
+                  <span>Admin</span>
+                </Link>
+              )}
+
+              {/* Notifications */}
+              {user && (
+                <div className="relative" ref={notificationsRef}>
+                  <button
+                    onClick={() => setShowNotifications(!showNotifications)}
+                    className="p-2 rounded-lg hover:bg-gray-800 relative transition-colors"
+                  >
+                    <Bell size={20} />
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                        {unreadCount > 9 ? "9+" : unreadCount}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Notifications Dropdown */}
+                  {showNotifications && (
+                    <div className="absolute right-0 mt-2 w-80 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50">
+                      <div className="p-3 border-b border-gray-800 flex justify-between items-center">
+                        <h3 className="font-semibold text-white">
+                          Notifications
+                        </h3>
+                        {unreadCount > 0 && (
+                          <button
+                            onClick={markAllAsRead}
+                            className="text-xs text-blue-400 hover:text-blue-300"
+                          >
+                            Mark all as read
+                          </button>
+                        )}
+                      </div>
+                      <div className="max-h-96 overflow-y-auto">
+                        {notifications.length > 0 ? (
+                          notifications.map((notification) => (
+                            <Link
+                              key={notification.id}
+                              to={notification.link || "#"}
+                              className={`block px-4 py-3 hover:bg-gray-800 border-b border-gray-800 last:border-b-0 transition-colors ${
+                                !notification.is_read
+                                  ? "bg-blue-900 bg-opacity-20"
+                                  : ""
+                              }`}
+                              onClick={() =>
+                                markNotificationAsRead(notification.id)
+                              }
+                            >
+                              <div className="flex justify-between">
+                                <p
+                                  className={`${
+                                    !notification.is_read
+                                      ? "font-semibold text-white"
+                                      : "text-gray-300"
+                                  }`}
+                                >
+                                  {notification.message}
+                                </p>
+                                {!notification.is_read && (
+                                  <span className="w-2 h-2 bg-blue-500 rounded-full self-center"></span>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-400 mt-1">
+                                {new Date(
+                                  notification.created_at
+                                ).toLocaleDateString()}
+                              </p>
+                            </Link>
+                          ))
+                        ) : (
+                          <div className="p-4 text-center text-gray-400">
+                            No notifications
+                          </div>
+                        )}
+                      </div>
+                      <Link
+                        to="/notifications"
+                        className="block text-center py-3 text-blue-400 hover:bg-gray-800 border-t border-gray-800 font-medium"
+                        onClick={() => setShowNotifications(false)}
+                      >
+                        View all notifications
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* User Menu */}
+              {user ? (
+                <div className="relative" ref={userMenuRef}>
+                  <button
+                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    className="flex items-center space-x-2 p-2 rounded-lg hover:bg-gray-800 transition-colors"
+                  >
+                    {user.avatar_url ? (
+                      <img
+                        src={user.avatar_url}
+                        alt={user.username}
+                        className="w-8 h-8 rounded-full border-2 border-gray-700"
+                      />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-linear-to-br from-blue-600 to-purple-600 flex items-center justify-center">
+                        <span className="text-white font-bold text-sm">
+                          {user.username?.charAt(0).toUpperCase()}
+                        </span>
+                      </div>
+                    )}
+                    <span className="hidden md:inline text-sm font-medium">
+                      {user.username}
+                    </span>
+                    {user.modder_status === "verified" && (
+                      <span className="hidden md:inline px-2 py-1 bg-yellow-900 text-yellow-200 text-xs rounded-full">
+                        Verified
+                      </span>
+                    )}
+                  </button>
+
+                  {/* User Menu Dropdown */}
+                  {showUserMenu && (
+                    <div className="absolute right-0 mt-2 w-48 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50">
+                      <div className="p-3 border-b border-gray-800">
+                        <p className="font-semibold text-white">
+                          {user.username}
+                        </p>
+                        <p className="text-xs text-gray-400 truncate">
+                          {user.email}
+                        </p>
+                        {user.modder_status !== "regular" && (
+                          <span className="inline-block mt-1 px-2 py-1 bg-blue-900 text-blue-200 text-xs rounded-full">
+                            {user.modder_status}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="py-1">
+                        {userMenuItems.map((item) => (
+                          <Link
+                            key={item.path}
+                            to={item.path}
+                            className="flex items-center space-x-2 px-4 py-2 text-sm hover:bg-gray-800 transition-colors"
+                            onClick={() => setShowUserMenu(false)}
+                          >
+                            {item.icon}
+                            <span>{item.label}</span>
+                          </Link>
+                        ))}
+                      </div>
+
+                      {isAdmin && (
+                        <>
+                          <div className="border-t border-gray-800 pt-1">
+                            <div className="px-4 py-2 text-xs text-gray-400 font-semibold">
+                              Admin Panel
+                            </div>
+                            {adminItems.map((item) => (
+                              <Link
+                                key={item.path}
+                                to={item.path}
+                                className="flex items-center space-x-2 px-4 py-2 text-sm hover:bg-gray-800 transition-colors"
+                                onClick={() => setShowUserMenu(false)}
+                              >
+                                {item.icon}
+                                <span>{item.label}</span>
+                              </Link>
+                            ))}
+                          </div>
+                        </>
+                      )}
+
+                      <div className="border-t border-gray-800">
+                        <button
+                          onClick={() => {
+                            logout();
+                            setShowUserMenu(false);
+                          }}
+                          className="flex items-center space-x-2 w-full px-4 py-3 text-sm hover:bg-red-900 hover:text-red-100 transition-colors text-red-400"
+                        >
+                          <LogOut size={16} />
+                          <span>Logout</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Login/Register Buttons */
+                <div className="flex items-center space-x-3">
+                  <Link
+                    to="/login"
+                    className="px-4 py-2 rounded-lg border border-gray-700 hover:bg-gray-800 transition-colors text-sm font-medium"
+                  >
+                    Login
+                  </Link>
+                  <Link
+                    to="/register"
+                    className="px-4 py-2 rounded-lg bg-linear-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 transition-all text-sm font-medium shadow-lg"
+                  >
+                    Sign Up
+                  </Link>
+                </div>
+              )}
+
+              {/* Mobile Menu Button */}
+              <button
+                onClick={() => setShowMobileMenu(!showMobileMenu)}
+                className="md:hidden p-2 rounded-lg hover:bg-gray-800 transition-colors"
+              >
+                {showMobileMenu ? <X size={24} /> : <Menu size={24} />}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Mobile Menu */}
+        {showMobileMenu && (
+          <div className="md:hidden bg-gray-900 border-t border-gray-800 animate-slideDown">
+            <div className="px-4 py-3 space-y-1">
+              {navItems.map((item) => (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className="flex items-center space-x-3 px-3 py-3 rounded-lg hover:bg-gray-800 transition-colors"
+                  onClick={() => setShowMobileMenu(false)}
+                >
+                  {item.icon}
+                  <span>{item.label}</span>
+                </Link>
+              ))}
+
+              {/* Admin items in mobile */}
+              {isAdmin && (
+                <>
+                  <div className="pt-3 border-t border-gray-800">
+                    <div className="px-3 py-2 text-xs text-gray-400 font-semibold">
+                      Admin Panel
+                    </div>
+                    {adminItems.map((item) => (
+                      <Link
+                        key={item.path}
+                        to={item.path}
+                        className="flex items-center space-x-3 px-3 py-3 rounded-lg hover:bg-purple-900 transition-colors text-purple-200"
+                        onClick={() => setShowMobileMenu(false)}
+                      >
+                        {item.icon}
+                        <span>{item.label}</span>
+                      </Link>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* User menu items in mobile */}
+              {user ? (
+                <>
+                  <div className="pt-3 border-t border-gray-800">
+                    {userMenuItems.map((item) => (
+                      <Link
+                        key={item.path}
+                        to={item.path}
+                        className="flex items-center space-x-3 px-3 py-3 rounded-lg hover:bg-gray-800 transition-colors"
+                        onClick={() => setShowMobileMenu(false)}
+                      >
+                        {item.icon}
+                        <span>{item.label}</span>
+                      </Link>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => {
+                      logout();
+                      setShowMobileMenu(false);
+                    }}
+                    className="flex items-center space-x-3 w-full px-3 py-3 rounded-lg hover:bg-red-900 transition-colors text-red-400"
+                  >
+                    <LogOut size={16} />
+                    <span>Logout</span>
+                  </button>
+                </>
+              ) : (
+                <div className="pt-3 border-t border-gray-800 space-y-2">
+                  <Link
+                    to="/login"
+                    className="block px-3 py-3 rounded-lg border border-gray-700 hover:bg-gray-800 transition-colors text-center"
+                    onClick={() => setShowMobileMenu(false)}
+                  >
+                    Login
+                  </Link>
+                  <Link
+                    to="/register"
+                    className="block px-3 py-3 rounded-lg bg-linear-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 transition-all text-center"
+                    onClick={() => setShowMobileMenu(false)}
+                  >
+                    Sign Up
+                  </Link>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </nav>
+    </>
+  );
+}
+
+================================================================================
+FILE: src\components\Pagination.jsx
+================================================================================
+
+export default function Pagination({ page, total, pageSize, onPage }) {
+  const pages = Math.ceil(total / pageSize);
+
+  return (
+    <div className="flex gap-2 mt-6 justify-center">
+      {Array.from({ length: pages }).map((_, i) => (
+        <button
+          key={i}
+          onClick={() => onPage(i + 1)}
+          className={`px-3 py-1 rounded ${
+            page === i + 1
+              ? "bg-blue-600"
+              : "bg-gray-800 hover:bg-gray-700"
+          }`}
+        >
+          {i + 1}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\components\PasswordStrength.jsx
+================================================================================
+
+export default function PasswordStrength({ password }) {
+  const rules = [
+    password.length >= 8,
+    /[A-Z]/.test(password),
+    /[0-9]/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+  ];
+
+  const score = rules.filter(Boolean).length;
+
+  const colors = ["bg-red-500", "bg-orange-500", "bg-yellow-500", "bg-green-500"];
+
+  return (
+    <div className="mt-2">
+      <div className="flex gap-1">
+        {[0, 1, 2, 3].map((i) => (
+          <div
+            key={i}
+            className={`h-1 w-full rounded ${
+              score > i ? colors[score - 1] : "bg-gray-700"
+            }`}
+          />
+        ))}
+      </div>
+      <p className="text-xs mt-1 text-gray-400">
+        {score < 2 && "Weak"}
+        {score === 2 && "Medium"}
+        {score === 3 && "Strong"}
+        {score === 4 && "Very strong"}
+      </p>
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\components\QueryErrorBoundary.jsx
+================================================================================
+
+// src/components/QueryErrorBoundary.jsx
+import { useQueryErrorResetBoundary } from '@tanstack/react-query';
+import { ErrorBoundary } from 'react-error-boundary';
+
+function ErrorFallback({ error, resetErrorBoundary }) {
+  return (
+    <div className="p-6 border border-red-800 bg-red-900/20 rounded-lg">
+      <h2 className="text-xl font-bold text-red-400 mb-2">Something went wrong</h2>
+      <pre className="text-sm bg-black p-3 rounded mb-4 overflow-auto">
+        {error.message}
+      </pre>
+      <div className="flex gap-3">
+        <button
+          onClick={resetErrorBoundary}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded"
+        >
+          Try again
+        </button>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded"
+        >
+          Refresh page
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function QueryErrorBoundary({ children }) {
+  const { reset } = useQueryErrorResetBoundary();
+
+  return (
+    <ErrorBoundary
+      onReset={reset}
+      FallbackComponent={ErrorFallback}
+      onError={(error) => {
+        // Log errors to your error tracking service
+        console.error('Query Error:', error);
+      }}
+    >
+      {children}
+    </ErrorBoundary>
+  );
+}
+================================================================================
+FILE: src\components\SEO.jsx
+================================================================================
+
+import { useEffect } from "react";
+
+export default function SEO({ title, description }) {
+  useEffect(() => {
+    if (title) document.title = title;
+
+    if (description) {
+      let meta = document.querySelector('meta[name="description"]');
+      if (!meta) {
+        meta = document.createElement("meta");
+        meta.name = "description";
+        document.head.appendChild(meta);
+      }
+      meta.content = description;
+    }
+  }, [title, description]);
+
+  return null;
+}
+
+================================================================================
+FILE: src\components\SkeletonCard.jsx
+================================================================================
+
+export default function SkeletonCard() {
+  return (
+    <div className="animate-pulse bg-card p-4 rounded border border-gray-800">
+      <div className="h-4 bg-gray-700 rounded w-3/4 mb-3"></div>
+      <div className="h-3 bg-gray-700 rounded w-full mb-2"></div>
+      <div className="h-3 bg-gray-700 rounded w-5/6"></div>
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\config\queryClient.js
+================================================================================
+
+// src/config/queryClient.js
+import { QueryClient } from '@tanstack/react-query';
+
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000, // 5 minutes
+      gcTime: 10 * 60 * 1000, // 10 minutes (cacheTime is now gcTime in v5)
+      retry: (failureCount, error) => {
+        // Don't retry on 4xx errors (client errors)
+        if (error?.response?.status >= 400 && error?.response?.status < 500) {
+          return false;
+        }
+        return failureCount < 3;
+      },
+      refetchOnWindowFocus: true,
+      refetchOnMount: true,
+      refetchOnReconnect: true,
+      networkMode: 'online', // or 'always' for offline-first
+    },
+    mutations: {
+      retry: 1,
+      networkMode: 'online',
+    },
+  },
+});
+================================================================================
+FILE: src\context\AuthContext.jsx
+================================================================================
+
+import { createContext, useContext, useEffect, useState } from "react";
+import api from "../api/axios";
+
+const AuthContext = createContext();
+
+function getStoredToken() {
+  return localStorage.getItem("access") || sessionStorage.getItem("access");
+}
+
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    const token = getStoredToken();
+    if (token) {
+      const payload = JSON.parse(atob(token.split(".")[1]));
+      setUser(payload);
+    }
+  }, []);
+
+  const login = async (username, password, remember) => {
+    const res = await api.post("auth/token/", {
+      username,
+      password,
+    });
+
+    const storage = remember ? localStorage : sessionStorage;
+
+    storage.setItem("access", res.data.access);
+    storage.setItem("refresh", res.data.refresh);
+
+    try {
+      const payload = JSON.parse(atob(res.data.access.split(".")[1]));
+      setUser(payload);
+    } catch {
+      logout();
+    }
+  };
+
+  const logout = () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    setUser(null);
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, login, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export const useAuth = () => useContext(AuthContext);
+
+================================================================================
+FILE: src\hooks\useApi.js
+================================================================================
+
+// src/hooks/useApi.js
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import api from '../api/axios';
+
+// User-related queries
+export const useUserProfile = (userId = null) => {
+  return useQuery({
+    queryKey: ['user', userId || 'me'],
+    queryFn: async () => {
+      const endpoint = userId ? `users/${userId}/` : 'users/me/';
+      const { data } = await api.get(endpoint);
+      return data;
+    },
+    enabled: !!userId || true, // Always enabled for 'me'
+    staleTime: 5 * 60 * 1000,
+  });
+};
+
+// Mods queries
+export const useMods = (filters = {}, page = 1, pageSize = 20) => {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    page_size: pageSize.toString(),
+    ...filters,
+  }).toString();
+
+  return useQuery({
+    queryKey: ['mods', filters, page],
+    queryFn: async () => {
+      const { data } = await api.get(`mods/?${params}`);
+      return data;
+    },
+    keepPreviousData: true, // Smooth pagination
+  });
+};
+
+export const useMod = (modId) => {
+  return useQuery({
+    queryKey: ['mod', modId],
+    queryFn: async () => {
+      const { data } = await api.get(`mods/${modId}/`);
+      return data;
+    },
+    enabled: !!modId,
+    staleTime: 2 * 60 * 1000,
+  });
+};
+
+// Categories queries
+export const useCategories = () => {
+  return useQuery({
+    queryKey: ['categories'],
+    queryFn: async () => {
+      const { data } = await api.get('categories/');
+      // Handle both array response and paginated response
+      if (Array.isArray(data)) {
+        return data;
+      } else if (data && data.results) {
+        return data.results;
+      }
+      return [];
+    },
+    staleTime: 30 * 60 * 1000,
+  });
+};
+
+// Forums queries
+export const useThreads = (categorySlug = null) => {
+  return useQuery({
+    queryKey: ['threads', categorySlug],
+    queryFn: async () => {
+      const url = categorySlug 
+        ? `forums/threads/?category=${categorySlug}`
+        : 'forums/threads/';
+      const { data } = await api.get(url);
+      return data;
+    },
+  });
+};
+
+// Mutations
+export const useUploadMod = () => {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: async (formData) => {
+      const { data } = await api.post('mods/', formData);
+      return data;
+    },
+    onSuccess: () => {
+      // Invalidate mods queries
+      queryClient.invalidateQueries(['mods']);
+      // Also invalidate user's mods if needed
+      queryClient.invalidateQueries(['user', 'me', 'mods']);
+    },
+    onError: (error) => {
+      console.error('Upload failed:', error);
+    },
+  });
+};
+
+export const useDownloadMod = () => {
+  return useMutation({
+    mutationFn: async (modId) => {
+      const response = await api.post(`mods/${modId}/track_download/`, {}, {
+        responseType: 'blob',
+      });
+      return response.data;
+    },
+  });
+};
+
+export const useCreateReview = () => {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: async ({ modId, rating, content }) => {
+      const { data } = await api.post('reviews/', {
+        mod: modId,
+        rating,
+        content,
+      });
+      return data;
+    },
+    onSuccess: (data, variables) => {
+      // Invalidate mod reviews and mod data
+      queryClient.invalidateQueries(['mod', variables.modId]);
+      queryClient.invalidateQueries(['reviews', variables.modId]);
+    },
+  });
+};
+================================================================================
+FILE: src\hooks\useDebounce.js
+================================================================================
+
+import { useEffect, useState } from "react";
+
+export default function useDebounce(value, delay = 500) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+
+  return debounced;
+}
+
+================================================================================
+FILE: src\main.jsx
+================================================================================
+
+// src/main.jsx
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import App from "./App";
+import ErrorBoundary from "./components/ErrorBoundary";
+import { queryClient } from "./config/queryClient";
+import "./styles/index.css";
+
+const rootElement = document.getElementById("root");
+
+if (!rootElement) {
+  throw new Error("Root element #root not found");
+}
+
+ReactDOM.createRoot(rootElement).render(
+  <React.StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+      <ReactQueryDevtools 
+        initialIsOpen={false} 
+        position="bottom-right"
+        toggleButtonProps={{
+          style: {
+            margin: '1rem',
+            backgroundColor: '#3b82f6',
+            color: 'white',
+            borderRadius: '9999px',
+            padding: '0.5rem',
+          },
+        }}
+      />
+    </QueryClientProvider>
+  </React.StrictMode>
+);
+================================================================================
+FILE: src\pages\AccountSettings.jsx
+================================================================================
+
+import { useEffect, useState } from "react";
+import api from "../api/axios";
+
+export default function AccountSettings() {
+  const [user, setUser] = useState(null);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    api.get("users/me/").then(res => setUser(res.data));
+  }, []);
+
+  const saveProfile = async () => {
+    await api.patch("users/me/", {
+      username: user.username,
+      email: user.email,
+    });
+    setMessage("Profile updated");
+  };
+
+  const changePassword = async (e) => {
+    e.preventDefault();
+    const form = new FormData(e.target);
+
+    await api.post("auth/change-password/", {
+      old_password: form.get("old"),
+      new_password: form.get("new"),
+    });
+
+    setMessage("Password changed");
+  };
+
+  if (!user) return <p>Loading…</p>;
+
+  return (
+    <div className="max-w-xl mx-auto">
+      <h1 className="text-2xl font-bold mb-6">Account Settings</h1>
+
+      {message && <p className="text-green-400 mb-4">{message}</p>}
+
+      <input
+        value={user.username}
+        onChange={(e) => setUser({ ...user, username: e.target.value })}
+        className="w-full mb-3 p-2 bg-black border border-gray-700 rounded"
+      />
+
+      <input
+        value={user.email}
+        onChange={(e) => setUser({ ...user, email: e.target.value })}
+        className="w-full mb-4 p-2 bg-black border border-gray-700 rounded"
+      />
+
+      <button onClick={saveProfile} className="bg-primary px-4 py-2 rounded">
+        Save Profile
+      </button>
+
+      <form onSubmit={changePassword} className="mt-8">
+        <h2 className="font-semibold mb-2">Change Password</h2>
+        <input
+          name="old"
+          type="password"
+          placeholder="Current password"
+          className="w-full mb-2 p-2 bg-black border border-gray-700 rounded"
+        />
+        <input
+          name="new"
+          type="password"
+          placeholder="New password"
+          className="w-full mb-3 p-2 bg-black border border-gray-700 rounded"
+        />
+        <button className="bg-primary px-4 py-2 rounded">
+          Update Password
+        </button>
+      </form>
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\pages\AdminAnalytics.jsx
+================================================================================
+
+import { useEffect, useState } from "react";
+import api from "../api/axios";
+import { Line, Bar } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  LineElement,
+  PointElement,
+  Tooltip,
+  Legend,
+} from "chart.js";
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  LineElement,
+  PointElement,
+  Tooltip,
+  Legend
+);
+
+export default function AdminAnalytics() {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    api.get("analytics/admin/").then((res) => setData(res.data));
+  }, []);
+
+  if (!data) return <p>Loading analytics...</p>;
+
+  return (
+    <div className="space-y-10">
+      <h1 className="text-3xl font-bold">Admin Analytics</h1>
+
+      <Line
+        data={{
+          labels: data.downloads_per_day.map((d) => d.day),
+          datasets: [
+            {
+              label: "Downloads",
+              data: data.downloads_per_day.map((d) => d.count),
+              borderColor: "var(--color-primary)",
+            },
+          ],
+        }}
+      />
+
+      <Bar
+        data={{
+          labels: data.mods_by_category.map((c) => c.category__name),
+          datasets: [
+            {
+              label: "Mods",
+              data: data.mods_by_category.map((c) => c.count),
+              backgroundColor: "#22c55e",
+            },
+          ],
+        }}
+      />
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\pages\AdminMods.jsx
+================================================================================
+
+import { useEffect, useState } from "react";
+import api from "../api/axios";
+
+export default function AdminMods() {
+  const [mods, setMods] = useState([]);
+
+  useEffect(() => {
+    api.get("mods/").then(res => setMods(res.data));
+  }, []);
+
+  const approve = async (id) => {
+    await api.post(`mods/${id}/approve/`);
+    setMods(prev => prev.filter(m => m.id !== id));
+  };
+
+  const reject = async (id) => {
+    await api.patch(`mods/${id}/`, { status: "rejected" });
+    setMods(prev => prev.filter(m => m.id !== id));
+  };
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold mb-6">Pending Mods</h1>
+
+      {mods.filter(m => !m.is_approved).map(mod => (
+        <div
+          key={mod.id}
+          className="bg-card p-4 mb-3 rounded"
+        >
+          <h2 className="font-semibold">{mod.title}</h2>
+
+          <div className="mt-2 space-x-2">
+            <button
+              onClick={() => approve(mod.id)}
+              className="bg-green-600 px-3 py-1 rounded"
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => reject(mod.id)}
+              className="bg-red-600 px-3 py-1 rounded"
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\pages\ForgotPassword.jsx
+================================================================================
+
+import { useState } from "react";
+import api from "../api/axios";
+
+export default function ForgotPassword() {
+  const [email, setEmail] = useState("");
+  const [sent, setSent] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    await api.post("auth/password-reset/", { email });
+    setSent(true);
+  };
+
+  return (
+    <div className="min-h-[80vh] flex items-center justify-center">
+      <form
+        onSubmit={submit}
+        className="max-w-md w-full bg-card p-6 rounded border border-gray-800"
+      >
+        <h1 className="text-xl font-bold mb-4">
+          Reset Password
+        </h1>
+
+        {sent ? (
+          <p className="text-green-400">
+            Password reset email sent.
+          </p>
+        ) : (
+          <>
+            <input
+              type="email"
+              placeholder="Your email"
+              required
+              className="w-full p-2 bg-black border border-gray-700 rounded mb-4"
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <button className="bg-primary w-full py-2 rounded">
+              Send Reset Link
+            </button>
+          </>
+        )}
+      </form>
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\pages\ForumThread.jsx
+================================================================================
+
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import api from "../api/axios";
+import SEO from "../components/SEO";
+
+export default function ForumThread() {
+  const { slug } = useParams();
+  const [posts, setPosts] = useState([]);
+  const [content, setContent] = useState("");
+  const [replyTo, setReplyTo] = useState(null);
+
+  useEffect(() => {
+    api
+      .get(`forums/posts/?thread_slug=${slug}`)
+      .then((res) => setPosts(res.data));
+  }, [slug]);
+
+  const submit = async () => {
+    await api.post("forums/posts/", {
+      content,
+      thread_id: posts[0]?.thread,
+      parent: replyTo,
+    });
+    window.location.reload();
+  };
+
+  const toggleLike = async (id) => {
+    await api.post(`forums/posts/${id}/like/`);
+    window.location.reload();
+  };
+
+  return (
+    <div>
+      <SEO
+        title="ETS2 Mods – Best Euro Truck Simulator 2 Mods"
+        description="Download the best ETS2 mods, trucks, maps and trailers"
+      />
+      <h1 className="text-2xl font-bold mb-6">Thread</h1>
+
+      {posts.map((p) => (
+        <div
+          key={p.id}
+          style={{ marginLeft: `${p.level * 20}px` }}
+          className="bg-card p-4 mb-3 rounded border border-gray-800"
+        >
+          <p className="text-sm text-gray-400">{p.author_name}</p>
+          <p className="mt-1">{p.content}</p>
+
+          <div className="flex gap-4 mt-2 text-sm">
+            <button
+              onClick={() => toggleLike(p.id)}
+              className={p.is_liked ? "text-blue-400" : "text-gray-400"}
+            >
+              👍 {p.like_count}
+            </button>
+
+            <button onClick={() => setReplyTo(p.id)} className="text-blue-400">
+              Reply
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <textarea
+        placeholder="Write reply..."
+        className="w-full p-3 bg-black border border-gray-700 mt-4"
+        onChange={(e) => setContent(e.target.value)}
+      />
+
+      <button onClick={submit} className="mt-3 bg-primary px-4 py-2 rounded">
+        Post Reply
+      </button>
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\pages\Forums.jsx
+================================================================================
+
+import { useEffect, useState } from "react";
+import api from "../api/axios";
+import SEO from "../components/SEO";
+
+export default function Forums() {
+  const [threads, setThreads] = useState([]);
+
+  useEffect(() => {
+    api.get("forums/threads/").then((res) => setThreads(res.data));
+  }, []);
+
+  return (
+    <div>
+      <SEO
+        title="ETS2 Mods – Best Euro Truck Simulator 2 Mods"
+        description="Download the best ETS2 mods, trucks, maps and trailers"
+      />
+      <h1 className="text-3xl font-bold mb-6">Forums</h1>
+
+      {threads.map((t) => (
+        <div key={t.id} className="bg-card p-4 mb-4 rounded">
+          <h2 className="font-semibold">{t.title}</h2>
+          <p className="text-sm text-gray-400">
+            By {t.author_name} | {t.post_count} replies
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\pages\Home.jsx
+================================================================================
+
+// src/pages/Home.jsx
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { useMods, useCategories } from "../hooks/useApi";
+import SkeletonCard from "../components/SkeletonCard";
+import Pagination from "../components/Pagination";
+import SEO from "../components/SEO";
+
+export default function Home() {
+  const [page, setPage] = useState(1);
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [searchFilter, setSearchFilter] = useState("");
+
+  const { 
+    data: categoriesData, 
+    isLoading: categoriesLoading,
+    error: categoriesError 
+  } = useCategories();
+  
+  const { 
+    data: modsData, 
+    isLoading: modsLoading,
+    isPreviousData,
+    error: modsError
+  } = useMods(
+    {
+      category: categoryFilter,
+      search: searchFilter,
+    },
+    page,
+    20
+  );
+
+  // Safely extract categories array
+  const categories = Array.isArray(categoriesData) ? categoriesData : [];
+  
+  // Safely extract mods data
+  const mods = Array.isArray(modsData?.results) ? modsData.results : [];
+  const total = modsData?.count || 0;
+
+  const handleCategoryChange = (e) => {
+    setCategoryFilter(e.target.value);
+    setPage(1);
+  };
+
+  // Show error states
+  if (categoriesError || modsError) {
+    return (
+      <div className="text-center py-12">
+        <h2 className="text-2xl font-bold text-red-400 mb-4">Error Loading Data</h2>
+        <p className="text-gray-400">
+          {categoriesError?.message || modsError?.message || "Please try again later"}
+        </p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-blue-600 rounded hover:bg-blue-700"
+        >
+          Reload Page
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <SEO
+        title="ETS2 Mods – Best Euro Truck Simulator 2 Mods"
+        description="Download the best ETS2 mods, trucks, maps and trailers"
+      />
+      
+      <h1 className="text-3xl font-bold mb-4">ETS2 Mods</h1>
+
+      {/* Filters */}
+      <div className="mb-6 flex flex-col md:flex-row gap-4">
+        <div className="flex-1">
+          <input
+            type="text"
+            placeholder="Search mods..."
+            className="w-full p-2 bg-black border border-gray-700 rounded"
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+          />
+        </div>
+        
+        <select
+          value={categoryFilter}
+          onChange={handleCategoryChange}
+          className="bg-black border border-gray-700 p-2 rounded"
+          disabled={categoriesLoading}
+        >
+          <option value="">All Categories</option>
+          {categories.map((c) => (
+            <option key={c.id || c.slug} value={c.slug}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Mods Grid */}
+      {modsLoading ? (
+        <div className="grid md:grid-cols-3 gap-6">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
+      ) : mods.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-gray-400 text-lg">No mods found.</p>
+          <p className="text-gray-500 mt-2">
+            Try adjusting your search or browse all categories.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="grid md:grid-cols-3 gap-6">
+            {mods.map((mod) => (
+              <Link
+                key={mod.id}
+                to={`/mods/${mod.id}`}
+                className="bg-card p-4 rounded border border-gray-800 hover:border-blue-500 hover:scale-[1.02] transition-all duration-300 group"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <h2 className="font-semibold group-hover:text-blue-400 transition-colors line-clamp-2">
+                    {mod.title}
+                  </h2>
+                  <span className="text-xs bg-gray-800 px-2 py-1 rounded whitespace-nowrap">
+                    v{mod.version}
+                  </span>
+                </div>
+                
+                <p className="text-sm text-gray-400 line-clamp-3 mb-4">
+                  {mod.description}
+                </p>
+                
+                <div className="flex items-center justify-between text-sm text-gray-500">
+                  <span className="flex items-center gap-1">
+                    <span>⭐</span>
+                    <span>{mod.average_rating || 'No ratings'}</span>
+                  </span>
+                  <span>📥 {mod.download_count}</span>
+                </div>
+              </Link>
+            ))}
+          </div>
+
+          {/* Pagination */}
+          {total > 20 && (
+            <Pagination
+              page={page}
+              total={total}
+              pageSize={20}
+              onPage={setPage}
+              disabled={isPreviousData}
+            />
+          )}
+        </>
+      )}
+
+      {/* Stats - Only show if we have data */}
+      {mods.length > 0 && (
+        <div className="mt-12 pt-6 border-t border-gray-800">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="text-center p-4 bg-gray-900 rounded">
+              <div className="text-2xl font-bold">{total || 0}</div>
+              <div className="text-sm text-gray-400">Total Mods</div>
+            </div>
+            <div className="text-center p-4 bg-gray-900 rounded">
+              <div className="text-2xl font-bold">
+                {mods.reduce((sum, mod) => sum + mod.download_count, 0).toLocaleString()}
+              </div>
+              <div className="text-sm text-gray-400">Total Downloads</div>
+            </div>
+            <div className="text-center p-4 bg-gray-900 rounded">
+              <div className="text-2xl font-bold">{categories.length}</div>
+              <div className="text-sm text-gray-400">Categories</div>
+            </div>
+            <div className="text-center p-4 bg-gray-900 rounded">
+              <div className="text-2xl font-bold">
+                {new Set(mods.map(m => m.author?.id || m.author)).size}
+              </div>
+              <div className="text-sm text-gray-400">Active Modders</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+================================================================================
+FILE: src\pages\Login.jsx
+================================================================================
+
+import { useState } from "react";
+import { useAuth } from "../context/AuthContext";
+import { useNavigate, Link } from "react-router-dom";
+
+export default function Login() {
+  const { login } = useAuth();
+  const navigate = useNavigate();
+
+  const [form, setForm] = useState({
+    username: "",
+    password: "",
+    remember: true,
+  });
+
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+
+    try {
+      setSubmitting(true);
+      await login(
+        form.username,
+        form.password,
+        form.remember
+      );
+      navigate("/");
+    } catch {
+      setError("Invalid username or password.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="min-h-[80vh] flex items-center justify-center">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-md bg-card p-6 rounded border border-gray-800"
+      >
+        <h1 className="text-2xl font-bold mb-6 text-center">
+          Login
+        </h1>
+
+        {error && (
+          <div className="mb-4 text-red-400 bg-black p-3 rounded border border-red-800">
+            {error}
+          </div>
+        )}
+
+        <input
+          placeholder="Username"
+          className="w-full mb-3 p-2 bg-black border border-gray-700 rounded"
+          onChange={(e) =>
+            setForm({ ...form, username: e.target.value })
+          }
+        />
+
+        <input
+          type="password"
+          placeholder="Password"
+          className="w-full mb-4 p-2 bg-black border border-gray-700 rounded"
+          onChange={(e) =>
+            setForm({ ...form, password: e.target.value })
+          }
+        />
+
+        {/* Remember Me */}
+        <label className="flex items-center gap-2 text-sm mb-4">
+          <input
+            type="checkbox"
+            checked={form.remember}
+            onChange={(e) =>
+              setForm({ ...form, remember: e.target.checked })
+            }
+          />
+          Remember me
+        </label>
+
+        <button
+          disabled={submitting}
+          className="w-full bg-primary py-2 rounded font-semibold"
+        >
+          {submitting ? "Logging in..." : "Login"}
+        </button>
+
+        <div className="flex justify-between mt-4 text-sm">
+          <Link to="/forgot-password" className="text-primary">
+            Forgot password?
+          </Link>
+          <Link to="/register" className="text-primary">
+            Register
+          </Link>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\pages\ModDetail.jsx
+================================================================================
+
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import api from "../api/axios";
+import ImageCarousel from "../components/ImageCarousel";
+import CompatibilityChecker from "../components/CompatibilityChecker";
+import SEO from "../components/SEO";
+
+export default function ModDetail() {
+  const { id } = useParams();
+  const [mod, setMod] = useState(null);
+  const [reviews, setReviews] = useState([]);
+
+  useEffect(() => {
+    api.get(`mods/${id}/`).then((res) => setMod(res.data));
+    api.get(`reviews/?mod_id=${id}`).then((res) => setReviews(res.data));
+  }, [id]);
+
+  if (!mod) return <p>Loading...</p>;
+
+  return (
+    <div className="space-y-8">
+      <SEO
+        title="ETS2 Mods – Best Euro Truck Simulator 2 Mods"
+        description="Download the best ETS2 mods, trucks, maps and trailers"
+      />
+      <h1 className="text-2xl font-bold">{mod.title}</h1>
+      <ImageCarousel images={mod.screenshots} />
+      <CompatibilityChecker modId={id} />
+      <p>{mod.description}</p>
+
+      <h2 className="text-xl font-semibold">Reviews</h2>
+
+      {reviews.map((r) => (
+        <div key={r.id} className="bg-black p-3 rounded border border-gray-700">
+          <strong>{r.user_username}</strong>
+          <p>⭐ {r.rating}</p>
+          <p>{r.content}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\pages\Notifications.jsx
+================================================================================
+
+import { useEffect, useState } from "react";
+import api from "../api/axios";
+import { Link } from "react-router-dom";
+
+export default function Notifications() {
+  const [items, setItems] = useState([]);
+
+  useEffect(() => {
+    api.get("users/notifications/").then(res => setItems(res.data));
+  }, []);
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold mb-6">Notifications</h1>
+
+      {items.map(n => (
+        <Link
+          key={n.id}
+          to={n.link}
+          className={`block p-3 mb-2 rounded border ${
+            n.is_read ? "border-gray-800" : "border-blue-500"
+          }`}
+        >
+          {n.message}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\pages\Register.jsx
+================================================================================
+
+import { useState } from "react";
+import api from "../api/axios";
+import { useNavigate, Link } from "react-router-dom";
+import PasswordStrength from "../components/PasswordStrength";
+
+export default function Register() {
+  const navigate = useNavigate();
+  const [form, setForm] = useState({
+    username: "",
+    email: "",
+    password: "",
+  });
+  const [error, setError] = useState("");
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+
+    try {
+      await api.post("auth/register/", form);
+      navigate("/login");
+    } catch {
+      setError("Registration failed. Try different credentials.");
+    }
+  };
+
+  return (
+    <div className="min-h-[80vh] flex items-center justify-center">
+      <form
+        onSubmit={submit}
+        className="max-w-md w-full bg-card p-6 rounded border border-gray-800"
+      >
+        <h1 className="text-xl font-bold mb-6">Register</h1>
+
+        {error && <div className="mb-4 text-red-400">{error}</div>}
+
+        <input
+          placeholder="Username"
+          className="w-full mb-3 p-2 bg-black border border-gray-700 rounded"
+          onChange={(e) => setForm({ ...form, username: e.target.value })}
+        />
+
+        <input
+          type="email"
+          placeholder="Email"
+          className="w-full mb-3 p-2 bg-black border border-gray-700 rounded"
+          onChange={(e) => setForm({ ...form, email: e.target.value })}
+        />
+
+        <input
+          type="password"
+          placeholder="Password"
+          onChange={(e) => setForm({ ...form, password: e.target.value })}
+          className="w-full mb-2 p-2 bg-black border border-gray-700 rounded"
+        />
+
+        <PasswordStrength password={form.password} />
+
+        <button className="w-full bg-primary py-2 rounded">Register</button>
+
+        <p className="text-sm mt-4 text-center">
+          Already have an account?{" "}
+          <Link to="/login" className="text-primary">
+            Login
+          </Link>
+        </p>
+      </form>
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\pages\UploadMod.jsx
+================================================================================
+
+import { useState, useEffect } from "react";
+import api from "../api/axios";
+import { useNavigate } from "react-router-dom";
+import SEO from "../components/SEO";
+
+export default function UploadMod() {
+  const navigate = useNavigate();
+  const [categories, setCategories] = useState([]);
+  const [form, setForm] = useState({
+    title: "",
+    description: "",
+    version: "",
+    category: "",
+    file_url: "",
+  });
+
+  useEffect(() => {
+    api.get("categories/").then((res) => setCategories(res.data));
+  }, []);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    await api.post("mods/", form);
+    navigate("/");
+  };
+
+  return (
+    <form onSubmit={submit} className="max-w-xl mx-auto bg-card p-6 rounded">
+      <SEO
+        title="ETS2 Mods – Best Euro Truck Simulator 2 Mods"
+        description="Download the best ETS2 mods, trucks, maps and trailers"
+      />
+      <h1 className="text-2xl font-bold mb-4">Upload Mod</h1>
+
+      <input
+        placeholder="Title"
+        className="w-full mb-3 p-2"
+        onChange={(e) => setForm({ ...form, title: e.target.value })}
+      />
+      <textarea
+        placeholder="Description"
+        className="w-full mb-3 p-2"
+        onChange={(e) => setForm({ ...form, description: e.target.value })}
+      />
+      <input
+        placeholder="Version"
+        className="w-full mb-3 p-2"
+        onChange={(e) => setForm({ ...form, version: e.target.value })}
+      />
+
+      <select
+        className="w-full mb-3 p-2"
+        onChange={(e) => setForm({ ...form, category: e.target.value })}
+      >
+        <option>Select Category</option>
+        {categories.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+
+      <input
+        placeholder="Download URL"
+        className="w-full mb-4 p-2"
+        onChange={(e) => setForm({ ...form, file_url: e.target.value })}
+      />
+
+      <button className="bg-primary px-6 py-2 rounded">Upload</button>
+    </form>
+  );
+}
+
+================================================================================
+FILE: src\pages\VerifyEmail.jsx
+================================================================================
+
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import api from "../api/axios";
+
+export default function VerifyEmail() {
+  const [params] = useSearchParams();
+  const [status, setStatus] = useState("verifying");
+
+  useEffect(() => {
+    const token = params.get("token");
+    if (!token) {
+      setStatus("invalid");
+      return;
+    }
+
+    api.post("auth/verify-email/", { token })
+      .then(() => setStatus("success"))
+      .catch(() => setStatus("error"));
+  }, [params]);
+
+  return (
+    <div className="min-h-[70vh] flex items-center justify-center">
+      <div className="bg-card p-6 rounded border border-gray-800 text-center">
+        {status === "verifying" && <p>Verifying email…</p>}
+        {status === "success" && (
+          <p className="text-green-400">Email verified successfully!</p>
+        )}
+        {status === "error" && (
+          <p className="text-red-400">Verification failed.</p>
+        )}
+        {status === "invalid" && (
+          <p className="text-red-400">Invalid verification link.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+================================================================================
+FILE: src\routes\AdminRoute.jsx
+================================================================================
+
+import { Navigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+
+export default function AdminRoute({ children }) {
+  const { user } = useAuth();
+
+  if (!user) return <Navigate to="/login" />;
+  if (!user.is_staff) return <Navigate to="/" />;
+
+  return children;
+}
+
+================================================================================
+FILE: src\routes\AppRoutes.jsx
+================================================================================
+
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import Home from "../pages/Home";
+
+export default function AppRoutes() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Home />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+================================================================================
+FILE: src\routes\ProtectedRoute.jsx
+================================================================================
+
+import { Navigate, useLocation } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+
+export default function ProtectedRoute({ children }) {
+  const { user } = useAuth();
+  const location = useLocation();
+
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  return children;
+}
+
+================================================================================
+FILE: src\styles\index.css
+================================================================================
+
+@import "tailwindcss";
+
+@theme {
+  --color-dark: #0f172a;
+  --color-card: #020617;
+  --color-primary: #3b82f6;
+}
+
+body {
+  background-color: var(--color-dark);
+  color: #e5e7eb;
+  font-family: system-ui, sans-serif;
+}
+
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slideDown {
+  animation: slideDown 0.2s ease-out;
+}
