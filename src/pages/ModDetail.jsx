@@ -32,7 +32,7 @@ export default function ModDetail() {
       const res = await api.get(`mods/items/${slug}/`);
       setMod(res.data);
       setCommentContent("");
-    } catch (err) {
+    } catch {
       alert("Failed to post comment");
     }
   };
@@ -57,7 +57,7 @@ export default function ModDetail() {
           {/* Gallery */}
           {selectedImage && (
              <div className="rounded-lg overflow-hidden border border-slate-700 bg-black">
-               <img src={selectedImage} alt="Preview" className="w-full max-h-[500px] object-contain" />
+               <img src={selectedImage} alt="Preview" className="w-full max-h-125 object-contain" />
              </div>
           )}
           <div className="flex gap-2 overflow-x-auto pb-2">
@@ -65,7 +65,7 @@ export default function ModDetail() {
               <button 
                 key={img.id} 
                 onClick={() => setSelectedImage(img.image)}
-                className={`flex-shrink-0 w-24 h-16 rounded overflow-hidden border ${selectedImage === img.image ? 'border-blue-500' : 'border-transparent'}`}
+                className={`shrink-0 w-24 h-16 rounded overflow-hidden border ${selectedImage === img.image ? 'border-blue-500' : 'border-transparent'}`}
               >
                 <img src={img.image} className="w-full h-full object-cover" />
               </button>
@@ -148,7 +148,7 @@ export default function ModDetail() {
                   href={link.url}
                   target="_blank" 
                   rel="noreferrer"
-                  className="block w-full bg-green-600 hover:bg-green-700 text-white text-center py-3 rounded font-bold transition flex flex-col"
+                  className="block w-full bg-green-600 hover:bg-green-700 text-white text-center py-3 rounded font-bold transition flex-col"
                 >
                   <span>Download via {link.name}</span>
                   <span className="text-xs font-normal opacity-80">Size: {link.file_size}</span>
