@@ -1,131 +1,95 @@
-// src/hooks/useApi.js
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../api/axios';
 
-// User-related queries
-export const useUserProfile = (userId = null) => {
-  return useQuery({
-    queryKey: ['user', userId || 'me'],
-    queryFn: async () => {
-      const endpoint = userId ? `users/${userId}/` : 'users/me/';
-      const { data } = await api.get(endpoint);
-      return data;
-    },
-    enabled: !!userId || true, // Always enabled for 'me'
-    staleTime: 5 * 60 * 1000,
-  });
-};
+// --- Mods ---
 
-// Mods queries
-export const useMods = (filters = {}, page = 1, pageSize = 20) => {
-  const params = new URLSearchParams({
-    page: page.toString(),
-    page_size: pageSize.toString(),
-    ...filters,
-  }).toString();
+export const useMods = (filters = {}, page = 1) => {
+  // Construct query params
+  const params = new URLSearchParams();
+  params.append('page', page);
+  
+  if (filters.search) params.append('search', filters.search);
+  if (filters.category) params.append('category', filters.category); // Assuming backend uses 'category' query param for slug or ID
+  if (filters.ordering) params.append('ordering', filters.ordering);
 
   return useQuery({
     queryKey: ['mods', filters, page],
     queryFn: async () => {
-      const { data } = await api.get(`mods/?${params}`);
+      const { data } = await api.get(`mods/items/?${params.toString()}`);
       return data;
     },
-    keepPreviousData: true, // Smooth pagination
+    keepPreviousData: true,
   });
 };
 
-export const useMod = (modId) => {
+export const useMod = (slug) => {
   return useQuery({
-    queryKey: ['mod', modId],
+    queryKey: ['mod', slug],
     queryFn: async () => {
-      const { data } = await api.get(`mods/${modId}/`);
+      const { data } = await api.get(`mods/items/${slug}/`);
       return data;
     },
-    enabled: !!modId,
-    staleTime: 2 * 60 * 1000,
+    enabled: !!slug,
   });
 };
 
-// Categories queries
+export const useUploadMod = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const { data } = await api.post('mods/items/', payload);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['mods']);
+    },
+  });
+};
+
+export const useUploadModImage = () => {
+  return useMutation({
+    mutationFn: async (formData) => {
+      const { data } = await api.post('mods/images/', formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      return data;
+    },
+  });
+};
+
+export const usePostComment = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ modId, ...data }) => {
+      return api.post('mods/comments/', { mod: modId, ...data });
+    },
+    onSuccess: () => {
+      // Invalidate specific mod to refresh comments
+      queryClient.invalidateQueries(['mod']); 
+    },
+  });
+};
+
+// --- Categories ---
+
 export const useCategories = () => {
   return useQuery({
     queryKey: ['categories'],
     queryFn: async () => {
       const { data } = await api.get('categories/');
-      // Handle both array response and paginated response
-      if (Array.isArray(data)) {
-        return data;
-      } else if (data && data.results) {
-        return data.results;
-      }
-      return [];
+      return data.results || data;
     },
-    staleTime: 30 * 60 * 1000,
+    staleTime: 10 * 60 * 1000, // 10 minutes
   });
 };
 
-// Forums queries
-export const useThreads = (categorySlug = null) => {
-  return useQuery({
-    queryKey: ['threads', categorySlug],
-    queryFn: async () => {
-      const url = categorySlug 
-        ? `forums/threads/?category=${categorySlug}`
-        : 'forums/threads/';
-      const { data } = await api.get(url);
-      return data;
-    },
-  });
-};
+// --- Contact ---
 
-// Mutations
-export const useUploadMod = () => {
-  const queryClient = useQueryClient();
-  
+export const useSubmitContact = () => {
   return useMutation({
     mutationFn: async (formData) => {
-      const { data } = await api.post('mods/', formData);
+      const { data } = await api.post('contact/', formData);
       return data;
-    },
-    onSuccess: () => {
-      // Invalidate mods queries
-      queryClient.invalidateQueries(['mods']);
-      // Also invalidate user's mods if needed
-      queryClient.invalidateQueries(['user', 'me', 'mods']);
-    },
-    onError: (error) => {
-      console.error('Upload failed:', error);
-    },
-  });
-};
-
-export const useDownloadMod = () => {
-  return useMutation({
-    mutationFn: async (modId) => {
-      const response = await api.post(`mods/${modId}/track_download/`, {}, {
-        responseType: 'blob',
-      });
-      return response.data;
-    },
-  });
-};
-
-export const useCreateReview = () => {
-  const queryClient = useQueryClient();
-  
-  return useMutation({
-    mutationFn: async ({ modId, rating, content }) => {
-      const { data } = await api.post('reviews/', {
-        mod: modId,
-        rating,
-        content,
-      });
-      return data;
-    },
-    onSuccess: (data, variables) => {
-      // Invalidate mod reviews and mod data
-      queryClient.invalidateQueries(['mod', variables.modId]);
-      queryClient.invalidateQueries(['reviews', variables.modId]);
     },
   });
 };
