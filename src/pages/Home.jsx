@@ -8,7 +8,8 @@ import {
   ChevronDown, ChevronUp, 
   Bus,
   BusFront,
-  CarFront
+  CarFront,
+  Gamepad2Icon
 } from "lucide-react";
 import { useMods, useCategories } from "../hooks/useApi";
 import useDebounce from "../hooks/useDebounce";
@@ -46,7 +47,8 @@ const iconMap = {
   other: MoreHorizontal,
   bus: Bus,
   "bus-front": BusFront,
-  "car-front": CarFront
+  "car-front": CarFront,
+  "gamepad-2": Gamepad2Icon
 };
 
 export default function Home() {
