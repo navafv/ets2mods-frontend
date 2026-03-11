@@ -5,7 +5,10 @@ import {
   Truck, Container, Map, Armchair, Speaker, 
   Image as ImageIcon, Palette, Wrench, Car, 
   Layout, Activity, Terminal, MoreHorizontal,
-  ChevronDown, ChevronUp 
+  ChevronDown, ChevronUp, 
+  Bus,
+  BusFront,
+  CarFront
 } from "lucide-react";
 import { useMods, useCategories } from "../hooks/useApi";
 import useDebounce from "../hooks/useDebounce";
@@ -40,7 +43,10 @@ const iconMap = {
   terminal: Terminal,
   "cheats-others": Terminal,
   "more-horizontal": MoreHorizontal,
-  other: MoreHorizontal
+  other: MoreHorizontal,
+  bus: Bus,
+  "bus-front": BusFront,
+  "car-front": CarFront
 };
 
 export default function Home() {
