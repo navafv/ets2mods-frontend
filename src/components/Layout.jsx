@@ -9,7 +9,7 @@ export default function Layout({ children }) {
       </main>
       <footer className="bg-white border-t border-slate-200 py-6 mt-auto">
         <div className="max-w-7xl mx-auto px-6 text-center text-slate-500 text-sm">
-          &copy; {new Date().getFullYear()} ETS2 Mods Hub. All rights reserved.
+          &copy; {new Date().getFullYear()} ETS2 Mods. All rights reserved.
         </div>
       </footer>
     </div>
